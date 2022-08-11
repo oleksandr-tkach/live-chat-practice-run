@@ -18,6 +18,13 @@ Create a new .env file in the project root directory. Copy content from .env-exa
 $ npm run start:dev
 ```
 
+## Test
+
+```bash
+# watch mode
+$ npm run test
+```
+
 ## Socket messaging examples:
 ```bash
 # create a room
