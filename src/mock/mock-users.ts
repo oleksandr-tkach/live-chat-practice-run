@@ -9,6 +9,6 @@ export const MOCK_USERS = [
     {
         id: uuidv4(),
         username: 'Jane',
-        authToken: 'auth-111',
+        authToken: 'auth-222',
     }
 ]
