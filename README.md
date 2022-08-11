@@ -21,7 +21,6 @@ $ npm run start:dev
 ## Test
 
 ```bash
-# watch mode
 $ npm run test
 ```
 
