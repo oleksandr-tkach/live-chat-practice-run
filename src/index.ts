@@ -12,6 +12,7 @@ import {MOCK_USERS} from "./mock/mock-users";
 import * as RoomService from "./room/room.service";
 import * as AuthService from "./user/auth.service";
 import {ERROR} from "./common/error/error";
+import {formatMessage} from "./helpers/format-message.helper";
 
 dotenv.config()
 
@@ -25,10 +26,6 @@ const users: UserModel[] = [
     ...MOCK_USERS
 ];
 const rooms: RoomModel[] = [];
-
-function formatMessage(message: string, initiator: UserModel): string {
-    return `${initiator.username}: ${message}`
-}
 
 wss.on('connection', function connection(socket: WebSocket) {
     const connectionId = uuidv4();
