@@ -3,9 +3,15 @@ import {v4 as uuidv4} from 'uuid';
 import dotenv from 'dotenv'
 import {createServer} from "http";
 import * as WebSocket from 'ws';
-import {RoomModel} from "./models/room.model";
-import {WsMessageModel} from "./models/ws-message.model";
-import {WsEventEnum} from "./enum/ws-event.enum";
+import {RoomModel} from "./common/models/room.model";
+import {WsMessageModel} from "./common/models/ws-message.model";
+import {WsEventEnum} from "./common/enum/ws-event.enum";
+import {UserModel} from "./common/models/user.model";
+import {WsResponseModel} from "./common/models/ws-response.model";
+import {MOCK_USERS} from "./mock/mock-users";
+import * as RoomService from "./room/room.service";
+import * as AuthService from "./user/auth.service";
+import {ERROR} from "./common/error/error";
 
 dotenv.config()
 
@@ -15,112 +21,89 @@ const port = process.env.PORT;
 const server = createServer(app);
 const wss = new WebSocket.Server({server});
 
-// const users: UserModel[] = [];
+const users: UserModel[] = [
+    ...MOCK_USERS
+];
 const rooms: RoomModel[] = [];
 
-// users.push({
-//     id: uuidv4(),
-//     username: 'first',
-//     authToken: '111',
-// })
-// users.push({
-//     id: uuidv4(),
-//     username: 'second',
-//     authToken: '222',
-// })
-//
-// function authUser(authToken: string): UserModel {
-//     return users.find(u => u.authToken === authToken)
-// }
-//
-// function getActiveUser(userId: string): UserModel {
-//     return users.find(u => u.id === userId)
-// }
-
-function findRoom(roomName: string): RoomModel {
-    return rooms.find(r => r.name === roomName)
+function formatMessage(message: string, initiator: UserModel): string {
+    return `${initiator.username}: ${message}`
 }
 
-function createRoom(roomName: string, uuid: string, socket: WebSocket): void {
-    const room: RoomModel = {
-        name: roomName,
-        onlineUsers: {},
-    };
-    room.onlineUsers[uuid] = socket;
-    rooms.push(room)
-}
-
-function joinRoom(roomName: string, uuid: string, socket: WebSocket): void {
-    const index = rooms.findIndex(r => r.name === roomName);
-    if (index < 0) {
-        return;
-    }
-    rooms[index].onlineUsers[uuid] = socket;
-}
-
-function leaveRoom(roomName: string, uuid: string): void {
-    const index = rooms.findIndex(r => r.name === roomName);
-    if (index < 0) {
-        return;
-    }
-    delete rooms[index].onlineUsers[uuid]
-}
-
-function leaveAllRooms(uuid: string): void {
-    for (const room of rooms) {
-        delete room.onlineUsers[uuid]
-    }
-}
-
-wss.on('connection', function connection(socket: WebSocket, req: Request) {
+wss.on('connection', function connection(socket: WebSocket) {
     const connectionId = uuidv4();
     console.log(`[${connectionId}] Connected`)
-    // const wsRoom = req.url;
 
     socket.on('message', function message(data: WebSocket.RawData) {
         try {
-            console.log(`${data}`)
-            const messageObj: WsMessageModel = JSON.parse(data.toString())
-
-            if (messageObj.event === WsEventEnum.CreateRoom) {
-                createRoom(messageObj.room, connectionId, socket)
-                console.log(`[${connectionId}] Created room ${messageObj.room}`)
+            let messageObj: WsMessageModel;
+            try {
+                messageObj = JSON.parse(data.toString())
+            } catch (err) {
+                throw new Error(ERROR.socket.invalidData)
             }
 
-            if (messageObj.event === WsEventEnum.JoinRoom) {
-                joinRoom(messageObj.room, connectionId, socket)
-                console.log(`[${connectionId}] Joined room ${messageObj.room}`)
+            const { authToken, event, room: roomName, message } = messageObj;
+
+            if (!authToken) {
+                throw new Error(ERROR.socket.missingToken)
             }
 
-            if (messageObj.event === WsEventEnum.LeaveRoom) {
-                leaveRoom(messageObj.room, connectionId)
-                console.log(`[${connectionId}] Left room ${messageObj.room}`)
+            const initiator = AuthService.authUser(users, authToken)
+
+            if (!event) {
+                throw new Error(ERROR.socket.missingEvent)
+            }
+
+            if (event === WsEventEnum.CreateRoom) {
+                RoomService.createRoom(rooms, roomName, connectionId, socket)
+                console.log(`[${connectionId}] Created room ${roomName}`)
+            }
+
+            if (event === WsEventEnum.JoinRoom) {
+                RoomService.joinRoom(rooms, roomName, connectionId, socket)
+                console.log(`[${connectionId}] Joined room ${roomName}`)
+            }
+
+            if (event === WsEventEnum.LeaveRoom) {
+                RoomService.leaveRoom(rooms, roomName, connectionId)
+                console.log(`[${connectionId}] Left room ${roomName}`)
             }
 
             // send message
-            if (messageObj.event === WsEventEnum.ChatMessage && messageObj.message) {
-                const room = findRoom(messageObj.room);
+            if (event === WsEventEnum.ChatMessage) {
+                if (!message) {
+                    throw new Error(ERROR.socket.emptyMessage)
+                }
+
+                const room = RoomService.findRoom(rooms, roomName);
                 if (room) {
-                    // check loop?
                     const connectionIds = Object.keys(room.onlineUsers)
                     connectionIds.forEach(id => {
                         if (connectionId !== id) {
-                            console.log(`[${connectionId}] Try sending a message ${messageObj.room}: ${messageObj.message}`)
-                            room.onlineUsers[id].send(JSON.stringify({ message: messageObj.message }))
+                            console.log(`[${connectionId}] Try sending a message ${room}: ${message}`)
+                            const broadcastMessage: WsResponseModel = {
+                                message: formatMessage(message, initiator),
+                                status: 1
+                            };
+                            room.onlineUsers[id].send(JSON.stringify(broadcastMessage))
                         }
                     })
-                    console.log(`[${connectionId}] Message sent ${messageObj.room}: ${messageObj.message}`)
+                    console.log(`[${connectionId}] Message sent ${roomName}: ${message}`)
                 }
             }
-
-        } catch (err) {
-            // log
+        }   catch (err) {
+            console.error(err.message)
+            const error: WsResponseModel = {
+                message: err.message,
+                status: 0,
+            };
+            socket.send(JSON.stringify(error))
         }
-
     });
 
     socket.on("close", () => {
-        leaveAllRooms(connectionId)
+        RoomService.leaveAllRooms(rooms, connectionId)
         console.log(`[${connectionId}] Disconnected`)
     });
 });
